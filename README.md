@@ -5,25 +5,120 @@ and a **single codebase**, but their data is completely isolated through JWT-bas
 
 ---
 
-## 📖 Project Flow
+## 📖 Overview
 
-The Multi-Tenant Task Management System is a SaaS-based backend application built using Spring Boot, Spring Security, JWT, and a single H2 database. The application supports multiple organizations (tenants) while ensuring complete data isolation between them. Every organization has its own users and tasks, but all data is stored in the same database. Tenant isolation is achieved by associating every user and task with a `tenant_id`, and this `tenant_id` is never accepted from the client. Instead, it is extracted only from the JWT token after successful authentication. This ensures that users cannot manipulate or access another tenant's data.
+Build a SaaS-style task management backend where multiple organizations (tenants) share the same backend and database, but their data must be completely isolated. No tenant should ever see another tenant’s data.
 
-The application flow starts with tenant registration. When a new organization calls `POST /tenant/register`, the system creates a new record in the tenant table and automatically creates the first ADMIN user for that tenant. The admin can then log in using `POST /auth/login`. During authentication, Spring Security validates the email and password using the `AuthenticationManager`. If authentication succeeds, the application generates a JWT containing the user's email, role, and `tenant_id`. This token is returned to the client and is used for all subsequent requests.
+This assignment tests:
+- Spring Security fundamentals
+- JWT handling and customization
+- Filter usage
+- Tenant isolation logic
+- Repository-level data protection
 
-For every secured request, the client sends the JWT in the `Authorization` header as a Bearer token. A custom `JwtAuthenticationFilter`, implemented using `OncePerRequestFilter`, intercepts every request before it reaches the controller. The filter validates the JWT, extracts the email, role, and `tenant_id`, creates an authenticated user in the `SecurityContext`, and stores the `tenant_id` in a `TenantContext` using `ThreadLocal`. This makes the current tenant available throughout the entire request lifecycle without requiring the client to send the tenant ID again.
+### CORE IDEA
+Single database, single codebase, multiple tenants.
+Tenant isolation must be enforced at every layer of the application.
 
-Role-based authorization is enforced using Spring Security. An **ADMIN** can create users only within the same tenant and can view all tasks belonging to that tenant. A **MANAGER** can create tasks and assign them only to users who belong to the same tenant. A **USER** can view only the tasks assigned to them and can update the status only of those assigned tasks. Each secured endpoint checks the authenticated user's role before executing business logic.
+### ENTITIES
+**Tenant**
+- id
+- name
+- created_at
 
-Whenever a task or user is created, the application automatically assigns the `tenant_id` obtained from the JWT. At no point does the application accept `tenant_id` from request parameters or request bodies. During task assignment, the service validates that both the task and the target user belong to the same tenant before updating the assignment. Similarly, when a user updates a task status, the application verifies that the task is assigned to the currently authenticated user.
+**User**
+- id
+- email
+- password
+- role (ADMIN, MANAGER, USER)
+- tenant_id
 
-The repository layer provides the final level of security. Every repository query filters data using `tenant_id`, such as `findByIdAndTenantId()` and `findAllByTenantId()`. This guarantees that no query can return data belonging to another tenant. Before updating any entity, ownership validation is performed to ensure the entity belongs to the authenticated tenant. This layered approach — JWT authentication, tenant context, role-based authorization, service-level validation, and repository-level filtering — ensures complete tenant isolation throughout the application.
+**Task**
+- id
+- title
+- description
+- status
+- assigned_to
+- tenant_id
 
-Overall, the project follows a secure request lifecycle:
+### ROLES
+**ADMIN**
+- Can manage users within the tenant
+- Can view all tasks in the tenant
 
-> **Tenant Registration → Login → JWT Generation → JWT Validation in Filter → Tenant Context Creation → Role Authorization → Service Validation → Repository Filtering → Response**
+**MANAGER**
+- Can create tasks
+- Can assign tasks to users of the same tenant
 
-By enforcing tenant isolation at every layer, the system prevents cross-tenant data access while maintaining a single codebase and a single database, fulfilling all the assignment requirements.
+**USER**
+- Can view only assigned tasks
+- Can update status of assigned tasks
+
+### SECURITY RULES (MANDATORY)
+- JWT must contain `tenant_id` and `role`
+- Tenant must be resolved only from JWT
+- `tenant_id` must never be accepted via request parameters or request body
+- Cross-tenant access must be impossible
+- All secured APIs must be authenticated
+
+### API DETAILS
+**`POST /tenant/register`**
+- Creates a new tenant
+- Creates the first ADMIN user for the tenant
+
+**`POST /auth/login`**
+- Authenticates user
+- Returns JWT containing `tenant_id` and `role`
+
+**`POST /users`**
+- Role: ADMIN
+- Creates a new user under the same tenant
+
+**`POST /tasks`**
+- Role: MANAGER
+- Creates a task
+- Task must automatically use `tenant_id` from JWT
+
+**`PUT /tasks/{id}/assign`**
+- Role: MANAGER
+- Assigns task to a user of the same tenant
+
+**`PUT /tasks/{id}/status`**
+- Role: USER
+- User can update only their assigned tasks
+
+**`GET /tasks`**
+- Role: USER, MANAGER, ADMIN
+- Returns tasks belonging only to the user’s tenant
+
+### SECURITY IMPLEMENTATION EXPECTATIONS
+- Use `OncePerRequestFilter` to extract `tenant_id` from JWT
+- Store tenant context in `SecurityContext` or `ThreadLocal`
+- Tenant context must be available throughout request lifecycle
+
+### REPOSITORY RULES
+- All repository queries must filter by `tenant_id`
+- No repository method should return data across tenants
+- Entity ownership must be validated before updates
+
+### DATABASE RULES
+- Use single MySQL database
+- `tenant_id` column must exist in every table
+- No multiple schemas or databases
+
+### SUBMISSION RULES
+- Upload project to GitHub
+- README must explain:
+  - How tenant isolation is achieved
+  - JWT structure and claims
+  - Security filter flow
+  - Include example JWT payload
+  - Provide steps to run the application
+- Unit test case for all ap is required (At least 80% coverage)
+- Share a video of yourself at least of 5 mins explaining about project in detail
+- Time Duration to submit is 24 Hours after receiving Email.
+
+*NOTE: This is a backend-focused assignment. UI is not required.*
 
 ---
 
