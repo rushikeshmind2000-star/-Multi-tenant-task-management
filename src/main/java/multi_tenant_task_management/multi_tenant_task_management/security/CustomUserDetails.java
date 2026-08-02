@@ -1,6 +1,6 @@
 package multi_tenant_task_management.multi_tenant_task_management.security;
 
-import multi_tenant_task_management.multi_tenant_task_management.entity.User;
+import multi_tenant_task_management.multi_tenant_task_management.entity.User; 
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.userdetails.UserDetails;
@@ -8,6 +8,7 @@ import org.springframework.security.core.userdetails.UserDetails;
 import java.util.Collection;
 import java.util.List;
 
+// commnication bridge 
 public class CustomUserDetails implements UserDetails {
 
     private final User user;

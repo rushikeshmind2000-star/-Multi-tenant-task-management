@@ -33,6 +33,7 @@ import java.io.IOException;
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private final JwtUtil jwtUtil;
+   
     private final CustomUserDetailsService customUserDetailsService;
 
     public JwtAuthenticationFilter(JwtUtil jwtUtil, CustomUserDetailsService customUserDetailsService) {
@@ -52,8 +53,11 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             final String authHeader = request.getHeader("Authorization");
 
             if (authHeader != null && authHeader.startsWith("Bearer ")) {
-                final String jwt = authHeader.substring(7).trim();
-                final String email = jwtUtil.extractEmail(jwt);
+                
+            	final String jwt = authHeader.substring(7).trim();
+              
+            	final String email = jwtUtil.extractEmail(jwt);
+                
 
                 if (email != null && SecurityContextHolder.getContext().getAuthentication() == null) {
                     CustomUserDetails userDetails =
@@ -62,7 +66,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                     if (jwtUtil.validateToken(jwt, userDetails)) {
                         // Step 2: Set tenant context from JWT (NOT from request)
                         Long tenantId = jwtUtil.extractTenantId(jwt);
-                        TenantContext.setTenantId(tenantId);
+                        TenantContext.setTenantId(tenantId); // tenentId extract
 
                         // Step 3: Set security context
                         UsernamePasswordAuthenticationToken authToken =

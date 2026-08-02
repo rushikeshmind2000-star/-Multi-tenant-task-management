@@ -1,6 +1,6 @@
 package multi_tenant_task_management.multi_tenant_task_management.entity;
 
-import jakarta.persistence.*;
+import jakarta.persistence.*; 
 import java.time.LocalDateTime;
 
 @Entity

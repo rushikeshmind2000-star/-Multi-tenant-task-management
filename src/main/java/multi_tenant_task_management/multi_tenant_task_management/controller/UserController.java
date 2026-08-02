@@ -34,8 +34,11 @@ public class UserController {
     @PreAuthorize("hasRole('ADMIN')")
     @Operation(summary = "Create user (ADMIN only)", description = "Creates a new user under the caller's tenant. tenant_id is taken from JWT.")
     public ResponseEntity<User> createUser(@RequestBody CreateUserRequest request) {
-        Long tenantId = TenantContext.getTenantId(); // Always from JWT, never from request
+        
+    	Long tenantId = TenantContext.getTenantId(); // Always from JWT, never from request
+      
         User user = userService.createUser(request, tenantId);
+        
         return new ResponseEntity<>(user, HttpStatus.CREATED);
     }
 }

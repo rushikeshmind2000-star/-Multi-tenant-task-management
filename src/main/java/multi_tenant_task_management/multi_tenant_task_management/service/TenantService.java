@@ -14,7 +14,9 @@ import org.springframework.transaction.annotation.Transactional;
 public class TenantService {
 
     private final TenantRepository tenantRepository;
+    
     private final UserRepository userRepository;
+    
     private final PasswordEncoder passwordEncoder;
 
     public TenantService(TenantRepository tenantRepository,
@@ -39,15 +41,22 @@ public class TenantService {
 
         // Create and save tenant
         Tenant tenant = new Tenant();
+        
         tenant.setName(request.getTenantName());
+        
         Tenant savedTenant = tenantRepository.save(tenant);
 
         // Create admin user for this tenant
         User adminUser = new User();
+       
         adminUser.setEmail(request.getAdminEmail());
+        
         adminUser.setPassword(passwordEncoder.encode(request.getAdminPassword()));
+        
         adminUser.setRole(Role.ADMIN);
+        
         adminUser.setTenantId(savedTenant.getId());
+        
         userRepository.save(adminUser);
 
         return savedTenant;

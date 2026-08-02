@@ -21,8 +21,11 @@ import java.time.LocalDateTime;
 public class AuthService {
 
     private final AuthenticationManager authenticationManager;
+   
     private final JwtUtil jwtUtil;
+    
     private final UserRepository userRepository;
+    
     private final TenantRepository tenantRepository;
 
     @Value("${jwt.expiration}")
