@@ -6,8 +6,10 @@ import io.swagger.v3.oas.models.info.Contact;
 import io.swagger.v3.oas.models.info.Info;
 import io.swagger.v3.oas.models.security.SecurityRequirement;
 import io.swagger.v3.oas.models.security.SecurityScheme;
+import io.swagger.v3.oas.models.servers.Server;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import java.util.List;
 
 @Configuration
 public class SwaggerConfig {
@@ -17,6 +19,14 @@ public class SwaggerConfig {
     @Bean
     public OpenAPI openAPI() {
         return new OpenAPI()
+                .servers(List.of(
+                        new Server()
+                                .url("https://multi-tenant-task-management-production-82ae.up.railway.app")
+                                .description("Railway Production"),
+                        new Server()
+                                .url("http://localhost:8080")
+                                .description("Local Development")
+                ))
                 .info(new Info()
                         .title("Multi-Tenant Task Management API")
                         .description("REST API for managing tenants, users, and tasks in a multi-tenant environment. "
@@ -32,6 +42,6 @@ public class SwaggerConfig {
                                 .type(SecurityScheme.Type.HTTP)
                                 .scheme("bearer")
                                 .bearerFormat("JWT")
-                                .description("Enter your JWT token obtained from POST /api/auth/login")));
+                                .description("Enter your JWT token obtained from POST /auth/login")));
     }
 }
