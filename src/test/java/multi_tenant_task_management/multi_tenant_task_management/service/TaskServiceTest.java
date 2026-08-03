@@ -12,6 +12,7 @@ import multi_tenant_task_management.multi_tenant_task_management.repository.Task
 import multi_tenant_task_management.multi_tenant_task_management.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -23,214 +24,297 @@ import org.springframework.security.access.AccessDeniedException;
 import java.util.List;
 import java.util.Optional;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
+/**
+ * Unit tests for {@link TaskService}.
+ *
+ * Covers:
+ *  - createTask: happy path, tenant isolation
+ *  - assignTask: happy path, task-not-found, cross-tenant user blocked
+ *  - updateStatus: assignee succeeds, non-assignee rejected, unassigned task rejected
+ *  - getTasks: ADMIN all-tenant, MANAGER all-tenant, USER own tasks only
+ */
 @ExtendWith(MockitoExtension.class)
-@DisplayName("TaskService Unit Tests")
+@DisplayName("TaskService — Unit Tests")
 class TaskServiceTest {
 
-    @Mock
-    private TaskRepository taskRepository;
-
-    @Mock
-    private UserRepository userRepository;
+    @Mock private TaskRepository taskRepository;
+    @Mock private UserRepository userRepository;
 
     @InjectMocks
     private TaskService taskService;
 
-    private static final Long TENANT_ID = 1L;
-    private static final Long USER_ID = 10L;
-    private static final Long TASK_ID = 100L;
+    // ─── shared constants ──────────────────────────────────────────────────────
 
-    private Task task;
-    private User user;
+    private static final Long TENANT_ID = 1L;
+    private static final Long USER_ID   = 10L;
+    private static final Long TASK_ID   = 100L;
+
+    private Task pendingTask;
+    private User assignee;
 
     @BeforeEach
     void setUp() {
-        task = new Task(TASK_ID, "Fix bug", "Critical issue", Status.PENDING, null, TENANT_ID);
-        user = new User(USER_ID, "user@acme.com", "pass", Role.USER, TENANT_ID);
+        pendingTask = new Task(TASK_ID, "Fix login bug", "Critical", Status.PENDING, null, TENANT_ID);
+        assignee    = new User(USER_ID, "bob@rsm.com", "hash", Role.USER, TENANT_ID);
     }
 
-    // ─────────────────────────────────────────────────────────────
-    // createTask
-    // ─────────────────────────────────────────────────────────────
+    // ─── createTask ────────────────────────────────────────────────────────────
 
-    @Test
-    @DisplayName("createTask — should save task with PENDING status and correct tenantId")
-    void createTask_ShouldSaveWithPendingStatusAndTenantId() {
-        CreateTaskRequest request = new CreateTaskRequest("New Task", "Description here");
-        when(taskRepository.save(any(Task.class))).thenAnswer(inv -> inv.getArgument(0));
+    @Nested
+    @DisplayName("createTask()")
+    class CreateTask {
 
-        Task result = taskService.createTask(request, TENANT_ID);
+        @Test
+        @DisplayName("should save task with PENDING status, correct title and tenantId")
+        void shouldSaveTaskWithPendingStatusAndTenantId() {
+            CreateTaskRequest req = new CreateTaskRequest("Deploy v2", "Deploy to prod");
+            when(taskRepository.save(any(Task.class))).thenAnswer(inv -> inv.getArgument(0));
 
-        assertNotNull(result);
-        assertEquals("New Task", result.getTitle());
-        assertEquals("Description here", result.getDescription());
-        assertEquals(Status.PENDING, result.getStatus());
-        assertEquals(TENANT_ID, result.getTenantId());
-        assertNull(result.getAssignedTo());
+            Task result = taskService.createTask(req, TENANT_ID);
+
+            assertThat(result.getTitle()).isEqualTo("Deploy v2");
+            assertThat(result.getDescription()).isEqualTo("Deploy to prod");
+            assertThat(result.getStatus()).isEqualTo(Status.PENDING);
+            assertThat(result.getTenantId()).isEqualTo(TENANT_ID);
+            assertThat(result.getAssignedTo()).isNull();
+        }
+
+        @Test
+        @DisplayName("should call taskRepository.save exactly once")
+        void shouldCallSaveOnce() {
+            when(taskRepository.save(any(Task.class))).thenAnswer(inv -> inv.getArgument(0));
+
+            taskService.createTask(new CreateTaskRequest("T", "D"), TENANT_ID);
+
+            verify(taskRepository, times(1)).save(any(Task.class));
+        }
+
+        @Test
+        @DisplayName("should isolate task to the given tenantId (not any other tenant)")
+        void shouldIsolateTaskToTenant() {
+            Long specificTenant = 42L;
+            when(taskRepository.save(any(Task.class))).thenAnswer(inv -> inv.getArgument(0));
+
+            Task result = taskService.createTask(new CreateTaskRequest("T", "D"), specificTenant);
+
+            assertThat(result.getTenantId()).isEqualTo(specificTenant);
+        }
     }
 
-    @Test
-    @DisplayName("createTask — should call taskRepository.save once")
-    void createTask_ShouldCallSaveOnce() {
-        CreateTaskRequest request = new CreateTaskRequest("Task", "Desc");
-        when(taskRepository.save(any(Task.class))).thenAnswer(inv -> inv.getArgument(0));
+    // ─── assignTask ────────────────────────────────────────────────────────────
 
-        taskService.createTask(request, TENANT_ID);
+    @Nested
+    @DisplayName("assignTask()")
+    class AssignTask {
 
-        verify(taskRepository, times(1)).save(any(Task.class));
+        @Test
+        @DisplayName("should assign user to task and save")
+        void shouldAssignUserToTask() {
+            AssignTaskRequest req = new AssignTaskRequest(USER_ID);
+            when(taskRepository.findByIdAndTenantId(TASK_ID, TENANT_ID)).thenReturn(Optional.of(pendingTask));
+            when(userRepository.findByIdAndTenantId(USER_ID, TENANT_ID)).thenReturn(Optional.of(assignee));
+            when(taskRepository.save(any(Task.class))).thenAnswer(inv -> inv.getArgument(0));
+
+            Task result = taskService.assignTask(TASK_ID, req, TENANT_ID);
+
+            assertThat(result.getAssignedTo()).isEqualTo(USER_ID);
+            verify(taskRepository).save(pendingTask);
+        }
+
+        @Test
+        @DisplayName("should throw ResourceNotFoundException when task not found in tenant")
+        void shouldThrowWhenTaskNotFound() {
+            when(taskRepository.findByIdAndTenantId(TASK_ID, TENANT_ID)).thenReturn(Optional.empty());
+
+            assertThatThrownBy(() -> taskService.assignTask(TASK_ID, new AssignTaskRequest(USER_ID), TENANT_ID))
+                    .isInstanceOf(ResourceNotFoundException.class)
+                    .hasMessageContaining(String.valueOf(TASK_ID));
+
+            verify(userRepository, never()).findByIdAndTenantId(any(), any());
+        }
+
+        @Test
+        @DisplayName("should throw ResourceNotFoundException when user belongs to a different tenant (cross-tenant blocked)")
+        void shouldThrowWhenUserIsFromDifferentTenant() {
+            Long foreignUserId = 999L;
+            AssignTaskRequest req = new AssignTaskRequest(foreignUserId);
+            when(taskRepository.findByIdAndTenantId(TASK_ID, TENANT_ID)).thenReturn(Optional.of(pendingTask));
+            // User 999 does NOT exist in tenant 1
+            when(userRepository.findByIdAndTenantId(foreignUserId, TENANT_ID)).thenReturn(Optional.empty());
+
+            assertThatThrownBy(() -> taskService.assignTask(TASK_ID, req, TENANT_ID))
+                    .isInstanceOf(ResourceNotFoundException.class)
+                    .hasMessageContaining(String.valueOf(foreignUserId));
+
+            verify(taskRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("should set assignedTo field on task entity before saving")
+        void shouldSetAssignedToField() {
+            AssignTaskRequest req = new AssignTaskRequest(USER_ID);
+            when(taskRepository.findByIdAndTenantId(TASK_ID, TENANT_ID)).thenReturn(Optional.of(pendingTask));
+            when(userRepository.findByIdAndTenantId(USER_ID, TENANT_ID)).thenReturn(Optional.of(assignee));
+            when(taskRepository.save(any(Task.class))).thenAnswer(inv -> inv.getArgument(0));
+
+            taskService.assignTask(TASK_ID, req, TENANT_ID);
+
+            ArgumentCaptor<Task> captor = ArgumentCaptor.forClass(Task.class);
+            verify(taskRepository).save(captor.capture());
+            assertThat(captor.getValue().getAssignedTo()).isEqualTo(USER_ID);
+        }
     }
 
-    // ─────────────────────────────────────────────────────────────
-    // assignTask
-    // ─────────────────────────────────────────────────────────────
+    // ─── updateStatus ──────────────────────────────────────────────────────────
 
-    @Test
-    @DisplayName("assignTask — should assign user to task within same tenant")
-    void assignTask_ShouldAssignUserToTask() {
-        AssignTaskRequest request = new AssignTaskRequest(USER_ID);
-        when(taskRepository.findByIdAndTenantId(TASK_ID, TENANT_ID)).thenReturn(Optional.of(task));
-        when(userRepository.findByIdAndTenantId(USER_ID, TENANT_ID)).thenReturn(Optional.of(user));
-        when(taskRepository.save(any(Task.class))).thenAnswer(inv -> inv.getArgument(0));
+    @Nested
+    @DisplayName("updateStatus()")
+    class UpdateStatus {
 
-        Task result = taskService.assignTask(TASK_ID, request, TENANT_ID);
+        @Test
+        @DisplayName("should update status when caller is the assigned user")
+        void shouldUpdateStatusForAssignee() {
+            pendingTask.setAssignedTo(USER_ID);
+            UpdateStatusRequest req = new UpdateStatusRequest(Status.IN_PROGRESS);
+            when(taskRepository.findByIdAndTenantId(TASK_ID, TENANT_ID)).thenReturn(Optional.of(pendingTask));
+            when(taskRepository.save(any(Task.class))).thenAnswer(inv -> inv.getArgument(0));
 
-        assertEquals(USER_ID, result.getAssignedTo());
-        verify(taskRepository).save(task);
+            Task result = taskService.updateStatus(TASK_ID, req, TENANT_ID, USER_ID);
+
+            assertThat(result.getStatus()).isEqualTo(Status.IN_PROGRESS);
+            verify(taskRepository).save(pendingTask);
+        }
+
+        @Test
+        @DisplayName("should update status to COMPLETED successfully")
+        void shouldUpdateStatusToCompleted() {
+            pendingTask.setAssignedTo(USER_ID);
+            UpdateStatusRequest req = new UpdateStatusRequest(Status.COMPLETED);
+            when(taskRepository.findByIdAndTenantId(TASK_ID, TENANT_ID)).thenReturn(Optional.of(pendingTask));
+            when(taskRepository.save(any(Task.class))).thenAnswer(inv -> inv.getArgument(0));
+
+            Task result = taskService.updateStatus(TASK_ID, req, TENANT_ID, USER_ID);
+
+            assertThat(result.getStatus()).isEqualTo(Status.COMPLETED);
+        }
+
+        @Test
+        @DisplayName("should throw AccessDeniedException when caller is NOT the assignee")
+        void shouldThrowWhenCallerIsNotAssignee() {
+            pendingTask.setAssignedTo(777L);  // assigned to someone else
+            UpdateStatusRequest req = new UpdateStatusRequest(Status.COMPLETED);
+            when(taskRepository.findByIdAndTenantId(TASK_ID, TENANT_ID)).thenReturn(Optional.of(pendingTask));
+
+            assertThatThrownBy(() -> taskService.updateStatus(TASK_ID, req, TENANT_ID, USER_ID))
+                    .isInstanceOf(AccessDeniedException.class);
+
+            verify(taskRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("should throw AccessDeniedException when task has no assignee (unassigned)")
+        void shouldThrowWhenTaskIsUnassigned() {
+            pendingTask.setAssignedTo(null);
+            UpdateStatusRequest req = new UpdateStatusRequest(Status.IN_PROGRESS);
+            when(taskRepository.findByIdAndTenantId(TASK_ID, TENANT_ID)).thenReturn(Optional.of(pendingTask));
+
+            assertThatThrownBy(() -> taskService.updateStatus(TASK_ID, req, TENANT_ID, USER_ID))
+                    .isInstanceOf(AccessDeniedException.class);
+
+            verify(taskRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("should throw ResourceNotFoundException when task not found")
+        void shouldThrowWhenTaskNotFound() {
+            when(taskRepository.findByIdAndTenantId(TASK_ID, TENANT_ID)).thenReturn(Optional.empty());
+
+            assertThatThrownBy(() ->
+                    taskService.updateStatus(TASK_ID, new UpdateStatusRequest(Status.COMPLETED), TENANT_ID, USER_ID))
+                    .isInstanceOf(ResourceNotFoundException.class)
+                    .hasMessageContaining(String.valueOf(TASK_ID));
+        }
     }
 
-    @Test
-    @DisplayName("assignTask — should throw ResourceNotFoundException when task not found")
-    void assignTask_ShouldThrowWhenTaskNotFound() {
-        AssignTaskRequest request = new AssignTaskRequest(USER_ID);
-        when(taskRepository.findByIdAndTenantId(TASK_ID, TENANT_ID)).thenReturn(Optional.empty());
+    // ─── getTasks ──────────────────────────────────────────────────────────────
 
-        assertThrows(ResourceNotFoundException.class,
-                () -> taskService.assignTask(TASK_ID, request, TENANT_ID));
-        verify(userRepository, never()).findByIdAndTenantId(any(), any());
-    }
+    @Nested
+    @DisplayName("getTasks() — role-based filtering")
+    class GetTasks {
 
-    @Test
-    @DisplayName("assignTask — should throw when user belongs to different tenant (cross-tenant protection)")
-    void assignTask_ShouldThrowWhenUserNotInSameTenant() {
-        AssignTaskRequest request = new AssignTaskRequest(99L);
-        when(taskRepository.findByIdAndTenantId(TASK_ID, TENANT_ID)).thenReturn(Optional.of(task));
-        // User 99 doesn't exist in tenant 1
-        when(userRepository.findByIdAndTenantId(99L, TENANT_ID)).thenReturn(Optional.empty());
+        private Task otherTask;
 
-        assertThrows(ResourceNotFoundException.class,
-                () -> taskService.assignTask(TASK_ID, request, TENANT_ID));
-        verify(taskRepository, never()).save(any());
-    }
+        @BeforeEach
+        void moreFixtures() {
+            otherTask = new Task(101L, "Write tests", "TDD", Status.PENDING, 20L, TENANT_ID);
+        }
 
-    // ─────────────────────────────────────────────────────────────
-    // updateStatus
-    // ─────────────────────────────────────────────────────────────
+        @Test
+        @DisplayName("ADMIN → should receive ALL tasks in the tenant")
+        void admin_ShouldReceiveAllTenantTasks() {
+            List<Task> all = List.of(pendingTask, otherTask);
+            when(taskRepository.findAllByTenantId(TENANT_ID)).thenReturn(all);
 
-    @Test
-    @DisplayName("updateStatus — should succeed when user is the assignee")
-    void updateStatus_ShouldSucceedWhenUserIsAssignee() {
-        task.setAssignedTo(USER_ID);
-        UpdateStatusRequest request = new UpdateStatusRequest(Status.IN_PROGRESS);
-        when(taskRepository.findByIdAndTenantId(TASK_ID, TENANT_ID)).thenReturn(Optional.of(task));
-        when(taskRepository.save(any(Task.class))).thenAnswer(inv -> inv.getArgument(0));
+            List<Task> result = taskService.getTasks(TENANT_ID, USER_ID, Role.ADMIN);
 
-        Task result = taskService.updateStatus(TASK_ID, request, TENANT_ID, USER_ID);
+            assertThat(result).hasSize(2).containsExactlyElementsOf(all);
+            verify(taskRepository).findAllByTenantId(TENANT_ID);
+            verify(taskRepository, never()).findByAssignedToAndTenantId(any(), any());
+        }
 
-        assertEquals(Status.IN_PROGRESS, result.getStatus());
-        verify(taskRepository).save(task);
-    }
+        @Test
+        @DisplayName("MANAGER → should receive ALL tasks in the tenant")
+        void manager_ShouldReceiveAllTenantTasks() {
+            List<Task> all = List.of(pendingTask);
+            when(taskRepository.findAllByTenantId(TENANT_ID)).thenReturn(all);
 
-    @Test
-    @DisplayName("updateStatus — should throw AccessDeniedException when user is NOT the assignee")
-    void updateStatus_ShouldThrowWhenUserIsNotAssignee() {
-        task.setAssignedTo(999L); // Assigned to a different user
-        UpdateStatusRequest request = new UpdateStatusRequest(Status.COMPLETED);
-        when(taskRepository.findByIdAndTenantId(TASK_ID, TENANT_ID)).thenReturn(Optional.of(task));
+            List<Task> result = taskService.getTasks(TENANT_ID, USER_ID, Role.MANAGER);
 
-        assertThrows(AccessDeniedException.class,
-                () -> taskService.updateStatus(TASK_ID, request, TENANT_ID, USER_ID));
-        verify(taskRepository, never()).save(any());
-    }
+            assertThat(result).hasSize(1);
+            verify(taskRepository).findAllByTenantId(TENANT_ID);
+            verify(taskRepository, never()).findByAssignedToAndTenantId(any(), any());
+        }
 
-    @Test
-    @DisplayName("updateStatus — should throw AccessDeniedException when task has no assignee")
-    void updateStatus_ShouldThrowWhenTaskHasNoAssignee() {
-        task.setAssignedTo(null); // Unassigned task
-        UpdateStatusRequest request = new UpdateStatusRequest(Status.COMPLETED);
-        when(taskRepository.findByIdAndTenantId(TASK_ID, TENANT_ID)).thenReturn(Optional.of(task));
+        @Test
+        @DisplayName("USER → should receive ONLY tasks assigned to them")
+        void user_ShouldReceiveOnlyOwnTasks() {
+            pendingTask.setAssignedTo(USER_ID);
+            List<Task> myTasks = List.of(pendingTask);
+            when(taskRepository.findByAssignedToAndTenantId(USER_ID, TENANT_ID)).thenReturn(myTasks);
 
-        assertThrows(AccessDeniedException.class,
-                () -> taskService.updateStatus(TASK_ID, request, TENANT_ID, USER_ID));
-    }
+            List<Task> result = taskService.getTasks(TENANT_ID, USER_ID, Role.USER);
 
-    @Test
-    @DisplayName("updateStatus — should throw ResourceNotFoundException when task not found")
-    void updateStatus_ShouldThrowWhenTaskNotFound() {
-        UpdateStatusRequest request = new UpdateStatusRequest(Status.COMPLETED);
-        when(taskRepository.findByIdAndTenantId(TASK_ID, TENANT_ID)).thenReturn(Optional.empty());
+            assertThat(result).hasSize(1);
+            assertThat(result.get(0).getAssignedTo()).isEqualTo(USER_ID);
+            verify(taskRepository).findByAssignedToAndTenantId(USER_ID, TENANT_ID);
+            verify(taskRepository, never()).findAllByTenantId(any());
+        }
 
-        assertThrows(ResourceNotFoundException.class,
-                () -> taskService.updateStatus(TASK_ID, request, TENANT_ID, USER_ID));
-    }
+        @Test
+        @DisplayName("USER → should receive empty list if no tasks assigned to them")
+        void user_ShouldReceiveEmptyListWhenNoTasksAssigned() {
+            when(taskRepository.findByAssignedToAndTenantId(USER_ID, TENANT_ID)).thenReturn(List.of());
 
-    // ─────────────────────────────────────────────────────────────
-    // getTasks (role-aware)
-    // ─────────────────────────────────────────────────────────────
+            List<Task> result = taskService.getTasks(TENANT_ID, USER_ID, Role.USER);
 
-    @Test
-    @DisplayName("getTasks — ADMIN should receive all tenant tasks")
-    void getTasks_AsAdmin_ShouldReturnAllTenantTasks() {
-        List<Task> allTasks = List.of(task, new Task(101L, "Other", "desc", Status.PENDING, 20L, TENANT_ID));
-        when(taskRepository.findAllByTenantId(TENANT_ID)).thenReturn(allTasks);
+            assertThat(result).isEmpty();
+        }
 
-        List<Task> result = taskService.getTasks(TENANT_ID, USER_ID, Role.ADMIN);
+        @Test
+        @DisplayName("USER → should NOT see tasks assigned to other users in the same tenant")
+        void user_ShouldNotSeeOtherUsersTasks() {
+            // Only USER_ID tasks returned by the repo
+            when(taskRepository.findByAssignedToAndTenantId(USER_ID, TENANT_ID)).thenReturn(List.of());
 
-        assertEquals(2, result.size());
-        verify(taskRepository).findAllByTenantId(TENANT_ID);
-        verify(taskRepository, never()).findByAssignedToAndTenantId(any(), any());
-    }
+            List<Task> result = taskService.getTasks(TENANT_ID, USER_ID, Role.USER);
 
-    @Test
-    @DisplayName("getTasks — MANAGER should receive all tenant tasks")
-    void getTasks_AsManager_ShouldReturnAllTenantTasks() {
-        List<Task> allTasks = List.of(task);
-        when(taskRepository.findAllByTenantId(TENANT_ID)).thenReturn(allTasks);
-
-        List<Task> result = taskService.getTasks(TENANT_ID, USER_ID, Role.MANAGER);
-
-        assertEquals(1, result.size());
-        verify(taskRepository).findAllByTenantId(TENANT_ID);
-        verify(taskRepository, never()).findByAssignedToAndTenantId(any(), any());
-    }
-
-    @Test
-    @DisplayName("getTasks — USER should receive only their assigned tasks")
-    void getTasks_AsUser_ShouldReturnOnlyAssignedTasks() {
-        task.setAssignedTo(USER_ID);
-        List<Task> assignedTasks = List.of(task);
-        when(taskRepository.findByAssignedToAndTenantId(USER_ID, TENANT_ID)).thenReturn(assignedTasks);
-
-        List<Task> result = taskService.getTasks(TENANT_ID, USER_ID, Role.USER);
-
-        assertEquals(1, result.size());
-        assertEquals(USER_ID, result.get(0).getAssignedTo());
-        verify(taskRepository).findByAssignedToAndTenantId(USER_ID, TENANT_ID);
-        verify(taskRepository, never()).findAllByTenantId(any());
-    }
-
-    @Test
-    @DisplayName("getTasks — USER should NOT see tasks assigned to other users in the same tenant")
-    void getTasks_AsUser_ShouldNotSeeOtherUsersTasks() {
-        // Only task assigned to USER_ID is returned by repository
-        when(taskRepository.findByAssignedToAndTenantId(USER_ID, TENANT_ID)).thenReturn(List.of());
-
-        List<Task> result = taskService.getTasks(TENANT_ID, USER_ID, Role.USER);
-
-        assertTrue(result.isEmpty());
-        verify(taskRepository).findByAssignedToAndTenantId(USER_ID, TENANT_ID);
+            // otherTask assigned to 20L should never appear
+            assertThat(result).doesNotContain(otherTask);
+        }
     }
 }

@@ -1,0 +1,28 @@
+# Docker & build artifacts
+target/
+*.jar
+*.war
+
+# IDE files
+.idea/
+.settings/
+.classpath
+.project
+.factorypath
+.springBeans
+.sts4-cache
+*.iws
+*.iml
+*.ipr
+
+# Maven wrapper jar
+.mvn/wrapper/maven-wrapper.jar
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Environment files — NEVER include in Docker image
+*.env
+.env
+src/main/resources/application-dev.properties

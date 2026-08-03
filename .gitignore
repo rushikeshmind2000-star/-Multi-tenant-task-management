@@ -31,3 +31,8 @@ build/
 
 ### VS Code ###
 .vscode/
+
+### Secret / Environment-specific config — NEVER commit these ###
+src/main/resources/application-dev.properties
+*.env
+.env
