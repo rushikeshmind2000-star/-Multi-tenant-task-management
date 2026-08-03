@@ -1,6 +1,20 @@
 # Multi-Tenant Task Management System
 
-A SaaS-style task management backend where multiple organizations (tenants) share a **single H2 database**
+## 🌐 Live Deployment
+
+> **Deployed on Railway** — Click the links below to access the live app:
+
+| | Link |
+|---|---|
+| 🚀 **Live API** | [https://multi-tenant-task-management-production-82ae.up.railway.app](https://multi-tenant-task-management-production-82ae.up.railway.app) |
+| 📖 **Swagger UI** | [https://multi-tenant-task-management-production-82ae.up.railway.app/swagger-ui/index.html](https://multi-tenant-task-management-production-82ae.up.railway.app/swagger-ui/index.html) |
+| 🗄️ **Database** | MySQL (hosted on Railway) |
+
+> **Quick test:** Open Swagger UI → `POST /tenant/register` → `POST /auth/login` → click 🔒 Authorize → test all APIs!
+
+---
+
+A SaaS-style task management backend where multiple organizations (tenants) share a **single MySQL database**
 and a **single codebase**, but their data is completely isolated through JWT-based tenant resolution.
 
 ---
